@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bloomberg Terminal</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'IBM Plex Mono', monospace; background: #0a0a0a; color: #c8c8c8; font-size: 12px; min-height: 100vh; }
+  
+  #topbar { background: #cc0000; padding: 5px 12px; display: flex; align-items: center; gap: 16px; border-bottom: 2px solid #ff0000; }
+  #topbar .logo { color: #fff; font-weight: 700; font-size: 13px; letter-spacing: 2px; }
+  #topbar input { background: #000; color: #ffcc00; border: 1px solid #ff4400; padding: 3px 8px; font-family: inherit; font-size: 13px; width: 120px; text-transform: uppercase; outline: none; }
+  #topbar button { background: #ff4400; color: #fff; border: none; padding: 4px 12px; cursor: pointer; font-family: inherit; font-size: 11px; font-weight: bold; }
+  #topbar button:hover { background: #ff6600; }
+  #clock { color: #ffcc00; font-size: 11px; margin-left: auto; }
+
+  #quoteBar { background: #111; border-bottom: 1px solid #333; padding: 8px 12px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap; min-height: 48px; }
+  .qticker { color: #ffcc00; font-size: 16px; font-weight: bold; }
+  .qexch { color: #666; font-size: 11px; margin-left: 6px; }
+  .qprice { color: #fff; font-size: 22px; font-weight: bold; }
+  .qchg.pos { color: #00ff88; }
+  .qchg.neg { color: #ff4466; }
+  .qmeta span { color: #aaa; margin-right: 14px; }
+  .qmeta span b { color: #fff; }
+
+  #tabs { background: #0f0f0f; border-bottom: 1px solid #333; display: flex; }
+  .tab { background: transparent; color: #888; border: none; border-right: 1px solid #222; padding: 7px 18px; cursor: pointer; font-family: inherit; font-size: 11px; font-weight: bold; letter-spacing: 1px; }
+  .tab.active { background: #cc0000; color: #fff; }
+  .tab:hover:not(.active) { background: #1a1a1a; color: #ccc; }
+
+  #content { padding: 14px; }
+  .loading { color: #ffcc00; text-align: center; padding: 60px; font-size: 14px; }
+  .error { color: #ff4466; padding: 20px; }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .section { margin-bottom: 16px; }
+  .section-title { background: #1a1a1a; border-left: 3px solid #cc0000; padding: 3px 8px; color: #ffcc00; font-size: 11px; font-weight: bold; letter-spacing: 1px; margin-bottom: 8px; }
+  .row { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid #141414; }
+  .row .lbl { color: #666; }
+  .row .val { color: #fff; }
+  .row .val.pos { color: #00ff88; }
+  .row .val.neg { color: #ff4466; }
+  .row .val.yellow { color: #ffcc00; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  th { color: #ffcc00; padding: 4px 8px; text-align: right; border-bottom: 1px solid #333; font-weight: 600; }
+  th:first-child { text-align: left; }
+  td { padding: 3px 8px; border-bottom: 1px solid #141414; color: #fff; text-align: right; }
+  td:first-child { text-align: left; color: #777; }
+
+  .news-item { border-bottom: 1px solid #1a1a1a; padding: 8px 0; display: flex; gap: 12px; }
+  .news-date { color: #555; min-width: 90px; font-size: 10px; padding-top: 2px; }
+  .news-title a { color: #ffcc00; text-decoration: none; font-size: 12px; display: block; margin-bottom: 3px; }
+  .news-title a:hover { color: #fff; }
+  .news-site { color: #555; font-size: 10px; }
+
+  .company-name { color: #ffcc00; font-size: 14px; font-weight: bold; margin-bottom: 4px; }
+  .company-sub { color: #888; font-size: 11px; margin-bottom: 8px; }
+  .company-desc { color: #b0b0b0; line-height: 1.7; font-size: 11px; }
+
+  @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } .qmeta { display: none; } }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <span class="logo">▶ BLOOMBERG TERMINAL</span>
+  <input type="text" id="tickerInput" value="AAPL" placeholder="TICKER" />
+  <button onclick="loadTicker()">GO</button>
+  <span id="clock"></span>
+</div>
+
+<div id="quoteBar"><span style="color:#555">Enter a ticker and press GO</span></div>
+
+<div id="tabs">
+  <button class="tab active" onclick="switchTab('overview', this)">[1] OVERVIEW</button>
+  <button class="tab" onclick="switchTab('fundamentals', this)">[2] FUNDAMENTALS</button>
+  <button class="tab" onclick="switchTab('financials', this)">[3] FINANCIALS</button>
+  <button class="tab" onclick="switchTab('estimates', this)">[4] ESTIMATES</button>
+  <button class="tab" onclick="switchTab('news', this)">[5] NEWS</button>
+</div>
+
+<div id="content"><div class="loading">⟳ Enter a ticker above and press GO</div></div>
+
+<script>
+const API_KEY = "v2mylmhYCtpTpI2MoMw2ff82TXVK1OJI";
+const BASE = "https://financialmodelingprep.com/api";
+let STATE = {};
+let currentTab = "overview";
+
+const fmt = (n, d=2) => n != null && !isNaN(n) ? Number(n).toLocaleString("en-US", {minimumFractionDigits:d, maximumFractionDigits:d}) : "N/A";
+const fmtB = n => {
+  if (n == null || isNaN(n)) return "N/A";
+  const a = Math.abs(n);
+  if (a >= 1e12) return (n/1e12).toFixed(2)+"T";
+  if (a >= 1e9)  return (n/1e9).toFixed(2)+"B";
+  if (a >= 1e6)  return (n/1e6).toFixed(2)+"M";
+  return fmt(n);
+};
+const pct = n => n != null && !isNaN(n) ? (n*100).toFixed(2)+"%" : "N/A";
+const clr = n => n > 0 ? "pos" : n < 0 ? "neg" : "";
+
+function tick() {
+  document.getElementById("clock").textContent = new Date().toLocaleTimeString();
+}
+setInterval(tick, 1000); tick();
+
+document.getElementById("tickerInput").addEventListener("keydown", e => { if(e.key==="Enter") loadTicker(); });
+
+async function loadTicker() {
+  const sym = document.getElementById("tickerInput").value.toUpperCase().trim();
+  if (!sym) return;
+  document.getElementById("content").innerHTML = `<div class="loading">⟳ Fetching data for ${sym}...</div>`;
+  document.getElementById("quoteBar").innerHTML = `<span style="color:#555">Loading ${sym}...</span>`;
+
+  try {
+    const [quote, profile, ratios, income, cashflow, balance, estimates, news] = await Promise.all([
+      fetch(`${BASE}/v3/quote/${sym}?apikey=${API_KEY}`).then(r=>r.json()),
+      fetch(`${BASE}/v3/profile/${sym}?apikey=${API_KEY}`).then(r=>r.json()),
+      fetch(`${BASE}/v3/ratios-ttm/${sym}?apikey=${API_KEY}`).then(r=>r.json()),
+      fetch(`${BASE}/v3/income-statement/${sym}?limit=4&apikey=${API_KEY}`).then(r=>r.json()),
+      fetch(`${BASE}/v3/cash-flow-statement/${sym}?limit=4&apikey=${API_KEY}`).then(r=>r.json()),
+      fetch(`${BASE}/v3/balance-sheet-statement/${sym}?limit=4&apikey=${API_KEY}`).then(r=>r.json()),
+      fetch(`${BASE}/v3/analyst-estimates/${sym}?limit=4&apikey=${API_KEY}`).then(r=>r.json()),
+      fetch(`${BASE}/v3/stock_news?tickers=${sym}&limit=8&apikey=${API_KEY}`).then(r=>r.json()),
+    ]);
+
+    if (!quote[0]) { document.getElementById("content").innerHTML = `<div class="error">Ticker "${sym}" not found.</div>`; return; }
+
+    STATE = { quote: quote[0], profile: profile[0], ratios: ratios[0], income, cashflow, balance, estimates, news };
+    renderQuoteBar();
+    renderTab(currentTab);
+  } catch(e) {
+    document.getElementById("content").innerHTML = `<div class="error">Error fetching data. Check your connection.</div>`;
+  }
+}
+
+function renderQuoteBar() {
+  const q = STATE.quote;
+  const chg = q.change, pctChg = q.changesPercentage;
+  const arrow = chg >= 0 ? "▲" : "▼";
+  document.getElementById("quoteBar").innerHTML = `
+    <div><span class="qticker">${q.symbol}</span><span class="qexch">${STATE.profile?.exchange || ""} Equity</span></div>
+    <div class="qprice">$${fmt(q.price)}</div>
+    <div class="qchg ${clr(chg)}">${arrow} ${fmt(Math.abs(chg))} (${fmt(Math.abs(pctChg))}%)</div>
+    <div class="qmeta">
+      <span>O: <b>${fmt(q.open)}</b></span>
+      <span>H: <b style="color:#00ff88">${fmt(q.dayHigh)}</b></span>
+      <span>L: <b style="color:#ff4466">${fmt(q.dayLow)}</b></span>
+      <span>Vol: <b>${fmtB(q.volume)}</b></span>
+      <span>Mkt Cap: <b>${fmtB(q.marketCap)}</b></span>
+      <span>P/E: <b>${fmt(q.pe)}</b></span>
+    </div>
+  `;
+}
+
+function switchTab(tab, btn) {
+  currentTab = tab;
+  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  btn.classList.add("active");
+  if (STATE.quote) renderTab(tab);
+}
+
+function renderTab(tab) {
+  const fns = { overview: renderOverview, fundamentals: renderFundamentals, financials: renderFinancials, estimates: renderEstimates, news: renderNews };
+  document.getElementById("content").innerHTML = fns[tab] ? fns[tab]() : "";
+}
+
+function section(title, inner) {
+  return `<div class="section"><div class="section-title">${title}</div>${inner}</div>`;
+}
+function row(label, value, cls="") {
+  return `<div class="row"><span class="lbl">${label}</span><span class="val ${cls}">${value}</span></div>`;
+}
+
+function renderOverview() {
+  const { profile, quote, ratios } = STATE;
+  const p = profile || {}, q = quote || {}, r = ratios || {};
+  return `<div class="grid2">
+    <div>
+      ${section("COMPANY", `
+        <div class="company-name">${p.companyName || "N/A"}</div>
+        <div class="company-sub">${p.sector || ""} | ${p.industry || ""}</div>
+        <div class="company-desc">${(p.description||"").slice(0,450)}${p.description?.length>450?"...":""}</div>
+      `)}
+      ${section("PRICE DATA", `
+        ${row("52W High", "$"+fmt(q.yearHigh), "pos")}
+        ${row("52W Low", "$"+fmt(q.yearLow), "neg")}
+        ${row("Avg Volume", fmtB(q.avgVolume))}
+        ${row("Beta", fmt(p.beta))}
+        ${row("EPS (TTM)", "$"+fmt(q.eps))}
+        ${row("Next Earnings", (q.earningsAnnouncement||"N/A").slice(0,10))}
+      `)}
+    </div>
+    <div>
+      ${section("VALUATION", `
+        ${row("P/E Ratio", fmt(r.peRatioTTM))}
+        ${row("P/S Ratio", fmt(r.priceToSalesRatioTTM))}
+        ${row("P/B Ratio", fmt(r.priceBookValueRatioTTM))}
+        ${row("EV/EBITDA", fmt(r.enterpriseValueMultipleTTM))}
+        ${row("PEG Ratio", fmt(r.pegRatioTTM))}
+        ${row("FCF Yield", pct(r.freeCashFlowYieldTTM))}
+      `)}
+      ${section("COMPANY INFO", `
+        ${row("CEO", p.ceo||"N/A")}
+        ${row("Employees", (p.fullTimeEmployees||0).toLocaleString())}
+        ${row("Country", p.country||"N/A")}
+        ${row("Exchange", p.exchange||"N/A")}
+        ${row("IPO Date", p.ipoDate||"N/A")}
+        ${row("Mkt Cap", fmtB(q.marketCap))}
+      `)}
+    </div>
+  </div>`;
+}
+
+function renderFundamentals() {
+  const r = STATE.ratios || {};
+  return `<div class="grid2">
+    <div>
+      ${section("PROFITABILITY", `
+        ${row("Gross Margin", pct(r.grossProfitMarginTTM), r.grossProfitMarginTTM>0.3?"pos":"yellow")}
+        ${row("Operating Margin", pct(r.operatingProfitMarginTTM), r.operatingProfitMarginTTM>0.15?"pos":"yellow")}
+        ${row("Net Margin", pct(r.netProfitMarginTTM), r.netProfitMarginTTM>0.1?"pos":"yellow")}
+        ${row("ROE", pct(r.returnOnEquityTTM), r.returnOnEquityTTM>0.15?"pos":"")}
+        ${row("ROA", pct(r.returnOnAssetsTTM))}
+        ${row("ROIC", pct(r.returnOnCapitalEmployedTTM))}
+      `)}
+      ${section("DIVIDENDS", `
+        ${row("Dividend Yield", pct(r.dividendYielTTM))}
+        ${row("Dividend/Share", "$"+fmt(r.dividendPerShareTTM))}
+        ${row("Payout Ratio", pct(r.payoutRatioTTM))}
+      `)}
+    </div>
+    <div>
+      ${section("LIQUIDITY & LEVERAGE", `
+        ${row("Current Ratio", fmt(r.currentRatioTTM), r.currentRatioTTM>1.5?"pos":"neg")}
+        ${row("Quick Ratio", fmt(r.quickRatioTTM), r.quickRatioTTM>1?"pos":"neg")}
+        ${row("Debt/Equity", fmt(r.debtEquityRatioTTM), r.debtEquityRatioTTM<1?"pos":"neg")}
+        ${row("Debt/Assets", fmt(r.debtRatioTTM))}
+        ${row("Interest Coverage", fmt(r.interestCoverageTTM), r.interestCoverageTTM>3?"pos":"neg")}
+        ${row("Cash/Share", "$"+fmt(r.cashPerShareTTM))}
+      `)}
+      ${section("EFFICIENCY", `
+        ${row("Asset Turnover", fmt(r.assetTurnoverTTM))}
+        ${row("Inventory Turnover", fmt(r.inventoryTurnoverTTM))}
+        ${row("Receivables Turnover", fmt(r.receivablesTurnoverTTM))}
+        ${row("FCF/Share", "$"+fmt(r.freeCashFlowPerShareTTM))}
+        ${row("EPS (TTM)", "$"+fmt(r.netIncomePerEBTTTM))}
+      `)}
+    </div>
+  </div>`;
+}
+
+function renderFinancials() {
+  const inc = (STATE.income||[]).slice(0,4);
+  const cf  = (STATE.cashflow||[]).slice(0,4);
+
+  const tableHead = (rows) => rows.map(y=>`<th>${y.date?.slice(0,4)||""}</th>`).join("");
+  const tableRow = (label, rows, fn) =>
+    `<tr><td>${label}</td>${rows.map(y=>`<td>${fn(y)}</td>`).join("")}</tr>`;
+
+  return `
+    ${section("INCOME STATEMENT (Annual, USD)", `
+      <table>
+        <thead><tr><th>Metric</th>${tableHead(inc)}</tr></thead>
+        <tbody>
+          ${tableRow("Revenue", inc, y=>fmtB(y.revenue))}
+          ${tableRow("Gross Profit", inc, y=>fmtB(y.grossProfit))}
+          ${tableRow("Operating Income", inc, y=>fmtB(y.operatingIncome))}
+          ${tableRow("Net Income", inc, y=>fmtB(y.netIncome))}
+          ${tableRow("EPS Diluted", inc, y=>"$"+fmt(y.epsdiluted))}
+          ${tableRow("EBITDA", inc, y=>fmtB(y.ebitda))}
+        </tbody>
+      </table>
+    `)}
+    ${section("CASH FLOW STATEMENT (Annual, USD)", `
+      <table>
+        <thead><tr><th>Metric</th>${tableHead(cf)}</tr></thead>
+        <tbody>
+          ${tableRow("Operating CF", cf, y=>fmtB(y.operatingCashFlow))}
+          ${tableRow("Capex", cf, y=>fmtB(y.capitalExpenditure))}
+          ${tableRow("Free Cash Flow", cf, y=>fmtB(y.freeCashFlow))}
+          ${tableRow("Dividends Paid", cf, y=>fmtB(y.dividendsPaid))}
+          ${tableRow("Stock Buybacks", cf, y=>fmtB(y.commonStockRepurchased))}
+        </tbody>
+      </table>
+    `)}
+  `;
+}
+
+function renderEstimates() {
+  const est = (STATE.estimates||[]).slice(0,4);
+  const q = STATE.quote || {};
+  const tableHead = est.map(e=>`<th>${e.date?.slice(0,7)||""}</th>`).join("");
+  const tableRow = (label, fn) => `<tr><td>${label}</td>${est.map(e=>`<td>${fn(e)}</td>`).join("")}</tr>`;
+
+  return `
+    ${section("ANALYST ESTIMATES", `
+      <table>
+        <thead><tr><th>Metric</th>${tableHead}</tr></thead>
+        <tbody>
+          ${tableRow("Est Revenue (avg)", e=>fmtB(e.estimatedRevenueAvg))}
+          ${tableRow("Est Revenue Low", e=>fmtB(e.estimatedRevenueLow))}
+          ${tableRow("Est Revenue High", e=>fmtB(e.estimatedRevenueHigh))}
+          ${tableRow("Est EPS (avg)", e=>"$"+fmt(e.estimatedEpsAvg))}
+          ${tableRow("Est EPS Low", e=>"$"+fmt(e.estimatedEpsLow))}
+          ${tableRow("Est EPS High", e=>"$"+fmt(e.estimatedEpsHigh))}
+          ${tableRow("Est EBITDA (avg)", e=>fmtB(e.estimatedEbitdaAvg))}
+          ${tableRow("# Analysts", e=>e.numberAnalystEstimatedRevenue||"N/A")}
+        </tbody>
+      </table>
+    `)}
+    ${section("PRICE VS ESTIMATES", `
+      ${row("Current Price", "$"+fmt(q.price), "yellow")}
+      ${row("Next EPS Est (avg)", "$"+fmt(est[0]?.estimatedEpsAvg))}
+      ${row("Implied Forward P/E", est[0]?.estimatedEpsAvg ? fmt(q.price/est[0].estimatedEpsAvg) : "N/A")}
+    `)}
+  `;
+}
+
+function renderNews() {
+  const news = STATE.news || [];
+  if (!news.length) return `<div class="error">No news found for this ticker.</div>`;
+  return section("LATEST NEWS", news.map(n=>`
+    <div class="news-item">
+      <div class="news-date">${(n.publishedDate||"").slice(0,10)}</div>
+      <div class="news-title">
+        <a href="${n.url}" target="_blank">${n.title}</a>
+        <span class="news-site">${n.site||""}</span>
+      </div>
+    </div>
+  `).join(""));
+}
+
+// Auto-load on start
+loadTicker();
+</script>
+</body>
+</html>
